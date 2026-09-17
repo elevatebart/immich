@@ -56,15 +56,23 @@ struct ExifInfo: Codable {
 struct Asset: Codable {
   let id: String
   let type: AssetType
+  /// Already orientation corrected by the server, and present on the plain
+  /// asset response, so this needs no `withExif`. Absent on older servers.
+  var width: Int? = nil
+  var height: Int? = nil
   var exifInfo: ExifInfo? = nil
 
   var deepLink: URL? {
     return URL(string: "immich://asset?id=\(id)")
   }
 
-  /// Dimensions as rendered, with the axes swapped when EXIF orientation
-  /// rotates the image. Mirrors `getDimensions` in server/src/utils/asset.util.ts.
+  /// Dimensions as rendered, falling back to raw EXIF with the rotation applied
+  /// by hand. Mirrors `getDimensions` in server/src/utils/asset.util.ts.
   var displaySize: (width: Int, height: Int)? {
+    if let width, let height, width > 0, height > 0 {
+      return (width, height)
+    }
+
     guard let exifInfo, let width = exifInfo.exifImageWidth,
       let height = exifInfo.exifImageHeight, width > 0, height > 0
     else {
