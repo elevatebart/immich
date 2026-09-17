@@ -9,6 +9,7 @@ enum WidgetError: Error, Codable {
   case fetchFailed
   case albumNotFound
   case noAssetsAvailable
+  case noMatchingAssets
 }
 
 enum FetchError: Error {
@@ -32,6 +33,9 @@ extension WidgetError: LocalizedError {
 
     case .noAssetsAvailable:
       return "No assets available"
+
+    case .noMatchingAssets:
+      return "No assets matched the selected filters"
     }
   }
 }
@@ -43,13 +47,41 @@ enum AssetType: String, Codable {
   case other = "OTHER"
 }
 
+struct ExifInfo: Codable {
+  let exifImageWidth: Int?
+  let exifImageHeight: Int?
+  let orientation: String?
+}
+
 struct Asset: Codable {
   let id: String
   let type: AssetType
+  var exifInfo: ExifInfo? = nil
 
   var deepLink: URL? {
     return URL(string: "immich://asset?id=\(id)")
   }
+
+  /// Dimensions as rendered, with the axes swapped when EXIF orientation
+  /// rotates the image. Mirrors `getDimensions` in server/src/utils/asset.util.ts.
+  var displaySize: (width: Int, height: Int)? {
+    guard let exifInfo, let width = exifInfo.exifImageWidth,
+      let height = exifInfo.exifImageHeight, width > 0, height > 0
+    else {
+      return nil
+    }
+
+    let rotated = [5, 6, 7, 8, -90, 90].contains(Int(exifInfo.orientation ?? "") ?? 0)
+    return rotated ? (height, width) : (width, height)
+  }
+}
+
+/// Sizes served by the asset media endpoints, smallest first.
+enum ImageSize: String, Codable {
+  case thumbnail
+  case preview
+  case fullsize
+  case original
 }
 
 struct SearchFilter: Codable {
@@ -57,6 +89,7 @@ struct SearchFilter: Codable {
   var size = 1
   var albumIds: [String] = []
   var isFavorite: Bool? = nil
+  var withExif: Bool = false
 }
 
 struct MemoryResult: Codable {
@@ -263,6 +296,46 @@ class ImmichAPI {
     }
 
     return UIImage(cgImage: thumbnail)
+  }
+
+  /// Downloads an asset without decoding it, so callers can hand the bytes off
+  /// to Shortcuts without paying the extension's memory ceiling for a bitmap.
+  func fetchImageData(asset: Asset, size: ImageSize) async throws(FetchError)
+    -> (data: Data, mimeType: String)
+  {
+    let isOriginal = size == .original
+    let endpoint = "/assets/" + asset.id + (isOriginal ? "/original" : "/thumbnail")
+    var params = [URLQueryItem(name: "edited", value: "true")]
+    if !isOriginal {
+      params.append(URLQueryItem(name: "size", value: size.rawValue))
+    }
+
+    guard
+      let fetchURL = buildRequestURL(
+        serverConfig: serverConfig,
+        endpoint: endpoint,
+        params: params
+      )
+    else {
+      throw .invalidURL
+    }
+
+    var request = URLRequest(url: fetchURL)
+    request.httpMethod = "GET"
+    applyCustomHeaders(for: &request)
+
+    guard let (data, response) = try? await URLSession.shared.data(for: request),
+      let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode)
+    else {
+      throw .fetchFailed
+    }
+
+    let mimeType =
+      http.value(forHTTPHeaderField: "Content-Type")?
+      .components(separatedBy: ";").first?
+      .trimmingCharacters(in: .whitespaces) ?? "application/octet-stream"
+
+    return (data, mimeType)
   }
 
   func fetchAlbums() async throws -> [Album] {
