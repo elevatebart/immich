@@ -119,5 +119,14 @@ struct ImmichAppShortcuts: AppShortcutsProvider {
       shortTitle: "Memory Photo",
       systemImageName: "sparkles.rectangle.stack"
     )
+    AppShortcut(
+      intent: SearchPhotosIntent(),
+      phrases: [
+        "Search \(.applicationName)",
+        "Search photos in \(.applicationName)",
+      ],
+      shortTitle: "Search Photos",
+      systemImageName: "magnifyingglass"
+    )
   }
 }

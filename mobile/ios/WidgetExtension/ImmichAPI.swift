@@ -100,6 +100,22 @@ struct SearchFilter: Codable {
   var withExif: Bool = false
 }
 
+struct SmartSearchFilter: Codable {
+  var query: String
+  var type = AssetType.image
+  var size = 25
+  var albumIds: [String] = []
+  var isFavorite: Bool? = nil
+}
+
+struct SearchResult: Codable {
+  struct AssetResults: Codable {
+    let items: [Asset]
+  }
+
+  let assets: AssetResults
+}
+
 struct MemoryResult: Codable {
   let id: String
   var assets: [Asset]
@@ -240,6 +256,28 @@ class ImmichAPI {
 
     // decode data
     return try JSONDecoder().decode([Asset].self, from: data)
+  }
+
+  /// CLIP search, so this needs Smart Search enabled on the server.
+  func fetchSmartSearchResults(with filter: SmartSearchFilter) async throws -> [Asset] {
+    guard
+      let searchURL = buildRequestURL(
+        serverConfig: serverConfig,
+        endpoint: "/search/smart"
+      )
+    else {
+      throw URLError(.badURL)
+    }
+
+    var request = URLRequest(url: searchURL)
+    request.httpMethod = "POST"
+    request.httpBody = try JSONEncoder().encode(filter)
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    applyCustomHeaders(for: &request)
+
+    let (data, _) = try await URLSession.shared.data(for: request)
+
+    return try JSONDecoder().decode(SearchResult.self, from: data).assets.items
   }
 
   func fetchMemory(for date: Date) async throws -> [MemoryResult] {
