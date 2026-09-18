@@ -12,6 +12,8 @@ extension WidgetError: CustomLocalizedStringResourceConvertible {
     case .albumNotFound: return "Album not found"
     case .noAssetsAvailable: return "No photos available"
     case .noMatchingAssets: return "No photos matched the selected filters"
+    case .advancedFiltersUnsupported:
+      return "Advanced filters need an Immich server running 3.2.0 or newer"
     }
   }
 }
@@ -80,6 +82,20 @@ enum PhotoQuality: String, AppEnum {
     case .original: return .original
     }
   }
+}
+
+enum FilterMode: String, AppEnum {
+  case simple
+  case advanced
+
+  static var typeDisplayRepresentation = TypeDisplayRepresentation(
+    name: "Mode"
+  )
+
+  static var caseDisplayRepresentations: [FilterMode: DisplayRepresentation] = [
+    .simple: "Simple",
+    .advanced: "Advanced (needs server 3.2.0+)",
+  ]
 }
 
 enum PhotoRating: String, AppEnum {

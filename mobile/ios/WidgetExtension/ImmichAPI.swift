@@ -10,6 +10,7 @@ enum WidgetError: Error, Codable {
   case albumNotFound
   case noAssetsAvailable
   case noMatchingAssets
+  case advancedFiltersUnsupported
 }
 
 enum FetchError: Error {
@@ -36,6 +37,9 @@ extension WidgetError: LocalizedError {
 
     case .noMatchingAssets:
       return "No assets matched the selected filters"
+
+    case .advancedFiltersUnsupported:
+      return "Advanced filters need Immich server 3.2.0 or newer"
     }
   }
 }
@@ -275,6 +279,36 @@ class ImmichAPI {
     return try JSONDecoder().decode([Asset].self, from: data)
   }
 
+  /// Structured-filter variant of the random search. Needs server v3.2.0+.
+  func fetchSearchResults(structured request: StructuredSearchRequest) async throws -> [Asset] {
+    guard
+      let searchURL = buildRequestURL(
+        serverConfig: serverConfig,
+        endpoint: "/search/random"
+      )
+    else {
+      throw URLError(.badURL)
+    }
+
+    var httpRequest = URLRequest(url: searchURL)
+    httpRequest.httpMethod = "POST"
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    httpRequest.httpBody = try encoder.encode(request)
+    httpRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    applyCustomHeaders(for: &httpRequest)
+
+    let (data, response) = try await URLSession.shared.data(for: httpRequest)
+
+    // A pre-3.2.0 server rejects the structured shape; say so rather than
+    // surfacing a decode failure.
+    if let http = response as? HTTPURLResponse, http.statusCode == 400 {
+      throw WidgetError.advancedFiltersUnsupported
+    }
+
+    return try JSONDecoder().decode([Asset].self, from: data)
+  }
+
   /// Named people only, since unnamed faces can't be picked meaningfully.
   func fetchPeople() async throws -> [Person] {
     guard
@@ -495,4 +529,47 @@ actor PersonCache {
     people = fetched
     return fetched
   }
+}
+
+// MARK: Structured Filter (server v3.2.0+)
+
+// The structured shape and the deprecated flat fields are mutually exclusive:
+// sending both is rejected, so a request commits to one or the other.
+
+struct IdsFilter: Codable {
+  var all: [String]? = nil
+  var any: [String]? = nil
+  var none: [String]? = nil
+}
+
+struct BoolFilter: Codable {
+  var eq: Bool
+}
+
+struct DateFilter: Codable {
+  var gte: Date? = nil
+  var lte: Date? = nil
+}
+
+struct NumberFilter: Codable {
+  var eq: Int
+}
+
+struct EnumFilterAssetType: Codable {
+  var eq: AssetType
+}
+
+struct StructuredFilter: Codable {
+  var type: EnumFilterAssetType? = nil
+  var albumIds: IdsFilter? = nil
+  var personIds: IdsFilter? = nil
+  var isFavorite: BoolFilter? = nil
+  var takenAt: DateFilter? = nil
+  var rating: NumberFilter? = nil
+}
+
+struct StructuredSearchRequest: Codable {
+  var size = 1
+  var withExif = false
+  var filter = StructuredFilter()
 }

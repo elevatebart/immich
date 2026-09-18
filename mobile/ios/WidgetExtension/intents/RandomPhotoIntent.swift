@@ -13,11 +13,20 @@ struct RandomPhotoIntent: AppIntent {
     )
   }
 
+  @Parameter(title: "Mode", default: .simple)
+  var mode: FilterMode
+
   @Parameter(title: "Album")
   var album: Album?
 
   @Parameter(title: "Person")
   var person: Person?
+
+  @Parameter(title: "Any Of These People")
+  var people: [Person]?
+
+  @Parameter(title: "But Not These People")
+  var excludedPeople: [Person]?
 
   @Parameter(title: "Favorites Only", default: false)
   var favoritesOnly: Bool
@@ -38,22 +47,65 @@ struct RandomPhotoIntent: AppIntent {
   var quality: PhotoQuality
 
   static var parameterSummary: some ParameterSummary {
-    Summary("Get a random photo") {
-      \.$album
-      \.$person
-      \.$favoritesOnly
-      \.$takenAfter
-      \.$takenBefore
-      \.$rating
-      \.$orientation
-      \.$quality
+    When(\.$mode, .equalTo, FilterMode.advanced) {
+      Summary("Get a random photo") {
+        \.$mode
+        \.$album
+        \.$people
+        \.$excludedPeople
+        \.$favoritesOnly
+        \.$takenAfter
+        \.$takenBefore
+        \.$rating
+        \.$orientation
+        \.$quality
+      }
+    } otherwise: {
+      Summary("Get a random photo") {
+        \.$mode
+        \.$album
+        \.$person
+        \.$favoritesOnly
+        \.$takenAfter
+        \.$takenBefore
+        \.$rating
+        \.$orientation
+        \.$quality
+      }
     }
   }
 
   func perform() async throws -> some IntentResult & ReturnsValue<IntentFile> {
     let api = try await ImmichAPI()
+    let poolSize = orientation == .any ? 1 : Self.candidatePoolSize
+    let needsExif = orientation != .any
 
+    let assets =
+      mode == .advanced
+      ? try await api.fetchSearchResults(
+        structured: structuredRequest(size: poolSize, withExif: needsExif)
+      )
+      : try await api.fetchSearchResults(
+        with: flatFilter(size: poolSize, withExif: needsExif)
+      )
+
+    guard !assets.isEmpty else {
+      throw WidgetError.noAssetsAvailable
+    }
+
+    guard let asset = assets.first(where: orientation.matches) else {
+      throw WidgetError.noMatchingAssets
+    }
+
+    return .result(value: try await api.intentFile(for: asset, quality: quality))
+  }
+
+  /// Deprecated flat fields, which every server version understands.
+  private func flatFilter(size: Int, withExif: Bool) -> SearchFilter {
     var filter = (album ?? Album.NONE).filter
+    filter.size = size
+    filter.withExif = withExif
+
     if let person {
       filter.personIds = [person.id]
     }
@@ -64,20 +116,36 @@ struct RandomPhotoIntent: AppIntent {
     filter.takenBefore = takenBefore
     filter.rating = rating.value
 
-    if orientation != .any {
-      filter.withExif = true
-      filter.size = Self.candidatePoolSize
+    return filter
+  }
+
+  /// Structured shape, the only one that can express "none of these people".
+  private func structuredRequest(size: Int, withExif: Bool) -> StructuredSearchRequest {
+    var filter = StructuredFilter(type: EnumFilterAssetType(eq: .image))
+
+    if let album, !album.isVirtual {
+      filter.albumIds = IdsFilter(any: [album.id])
     }
 
-    let assets = try await api.fetchSearchResults(with: filter)
-    guard !assets.isEmpty else {
-      throw WidgetError.noAssetsAvailable
+    let included = (people ?? []).map(\.id)
+    let excluded = (excludedPeople ?? []).map(\.id)
+    if !included.isEmpty || !excluded.isEmpty {
+      filter.personIds = IdsFilter(
+        any: included.isEmpty ? nil : included,
+        none: excluded.isEmpty ? nil : excluded
+      )
     }
 
-    guard let asset = assets.first(where: orientation.matches) else {
-      throw WidgetError.noMatchingAssets
+    if favoritesOnly || album == Album.FAVORITES {
+      filter.isFavorite = BoolFilter(eq: true)
+    }
+    if takenAfter != nil || takenBefore != nil {
+      filter.takenAt = DateFilter(gte: takenAfter, lte: takenBefore)
+    }
+    if let value = rating.value {
+      filter.rating = NumberFilter(eq: value)
     }
 
-    return .result(value: try await api.intentFile(for: asset, quality: quality))
+    return StructuredSearchRequest(size: size, withExif: withExif, filter: filter)
   }
 }
