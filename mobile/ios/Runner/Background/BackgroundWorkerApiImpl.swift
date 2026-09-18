@@ -27,6 +27,37 @@ class BackgroundWorkerApiImpl: BackgroundWorkerFgHostApi {
   private static let processingTaskID = taskIDs.first { $0.hasSuffix(".processingUpload") }!
   private static let taskSemaphore = DispatchSemaphore(value: 1)
 
+  /// Runs the upload worker outside the BGTaskScheduler path, for the Shortcuts
+  /// intent. Returns nil when a scheduled task already holds the engine, and
+  /// otherwise whether the worker finished rather than hitting maxSeconds.
+  public static func runOnDemand(maxSeconds: Int) async -> Bool? {
+    guard taskSemaphore.wait(timeout: .now()) == .success else {
+      return nil
+    }
+
+    let resume = ResumeOnce()
+
+    return await withCheckedContinuation { continuation in
+      let finish: (Bool) -> Void = { success in
+        guard resume.claim() else { return }
+        taskSemaphore.signal()
+        continuation.resume(returning: success)
+      }
+
+      let worker = BackgroundWorker(taskType: .processing, maxSeconds: maxSeconds, completionHandler: finish)
+
+      // Dart can hang without ever calling back, which would strand the
+      // semaphore and block every later scheduled backup.
+      DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(maxSeconds + 5)) {
+        finish(false)
+      }
+
+      DispatchQueue.main.async {
+        worker.run()
+      }
+    }
+  }
+
   public static func registerBackgroundWorkers() {
       BGTaskScheduler.shared.register(
           forTaskWithIdentifier: processingTaskID, using: nil) { task in
@@ -124,5 +155,23 @@ class BackgroundWorkerApiImpl: BackgroundWorkerFgHostApi {
     semaphore.wait()
     task.setTaskCompleted(success: isSuccess)
     print("Background task completed with success: \(isSuccess)")
+  }
+}
+
+/// One-shot latch so a worker callback and its watchdog can't both resume.
+private final class ResumeOnce {
+  private let lock = NSLock()
+  private var claimed = false
+
+  func claim() -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+
+    if claimed {
+      return false
+    }
+
+    claimed = true
+    return true
   }
 }
