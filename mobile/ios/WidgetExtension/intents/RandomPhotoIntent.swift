@@ -38,7 +38,8 @@ struct RandomPhotoIntent: AppIntent {
   var quality: PhotoQuality
 
   static var parameterSummary: some ParameterSummary {
-    Summary("Get a random photo from \(\.$album)") {
+    Summary("Get a random photo") {
+      \.$album
       \.$person
       \.$favoritesOnly
       \.$takenAfter

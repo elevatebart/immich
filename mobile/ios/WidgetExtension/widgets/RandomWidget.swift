@@ -16,13 +16,9 @@ extension Album: @unchecked Sendable, AppEntity, Identifiable {
     func suggestedEntities() async -> [Album] {
       let albums = (try? await AlbumCache.shared.getAlbums()) ?? []
 
-      let options =
-        [
-          NONE,
-          FAVORITES,
-        ] + albums
-
-      return options
+      // NONE is the fallback for an unset album, not something to offer: an
+      // empty picker already means the whole library.
+      return [FAVORITES] + albums
     }
   }
 

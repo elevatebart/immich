@@ -32,7 +32,8 @@ struct SearchPhotosIntent: AppIntent {
   var quality: PhotoQuality
 
   static var parameterSummary: some ParameterSummary {
-    Summary("Search \(\.$album) for \(\.$query)") {
+    Summary("Search for \(\.$query)") {
+      \.$album
       \.$limit
       \.$orientation
       \.$quality
