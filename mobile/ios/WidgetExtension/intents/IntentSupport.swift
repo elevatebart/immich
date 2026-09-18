@@ -82,6 +82,41 @@ enum PhotoQuality: String, AppEnum {
   }
 }
 
+enum PhotoRating: String, AppEnum {
+  case any
+  case one
+  case two
+  case three
+  case four
+  case five
+
+  static var typeDisplayRepresentation = TypeDisplayRepresentation(
+    name: "Rating"
+  )
+
+  static var caseDisplayRepresentations: [PhotoRating: DisplayRepresentation] = [
+    .any: "Any",
+    .one: "★",
+    .two: "★★",
+    .three: "★★★",
+    .four: "★★★★",
+    .five: "★★★★★",
+  ]
+
+  /// nil leaves the field off the request entirely, which the server reads as
+  /// "don't filter" rather than "unrated".
+  var value: Int? {
+    switch self {
+    case .any: return nil
+    case .one: return 1
+    case .two: return 2
+    case .three: return 3
+    case .four: return 4
+    case .five: return 5
+    }
+  }
+}
+
 // MARK: Shared Helpers
 
 extension ImmichAPI {

@@ -96,8 +96,22 @@ struct SearchFilter: Codable {
   var type = AssetType.image
   var size = 1
   var albumIds: [String] = []
+  var personIds: [String] = []
   var isFavorite: Bool? = nil
+  var takenAfter: Date? = nil
+  var takenBefore: Date? = nil
+  /// Exact match on 1...5, omitted when nil.
+  var rating: Int? = nil
   var withExif: Bool = false
+}
+
+struct Person: Codable, Equatable {
+  let id: String
+  let name: String
+}
+
+struct PeopleResult: Codable {
+  let people: [Person]
 }
 
 struct SmartSearchFilter: Codable {
@@ -248,14 +262,39 @@ class ImmichAPI {
 
     var request = URLRequest(url: searchURL)
     request.httpMethod = "POST"
-    request.httpBody = try JSONEncoder().encode(filters)
+    // The server wants ISO8601 dates; the default strategy sends epoch numbers.
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    request.httpBody = try encoder.encode(filters)
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
     applyCustomHeaders(for: &request)
-    
+
     let (data, _) = try await URLSession.shared.data(for: request)
 
     // decode data
     return try JSONDecoder().decode([Asset].self, from: data)
+  }
+
+  /// Named people only, since unnamed faces can't be picked meaningfully.
+  func fetchPeople() async throws -> [Person] {
+    guard
+      let peopleURL = buildRequestURL(
+        serverConfig: serverConfig,
+        endpoint: "/people",
+        params: [URLQueryItem(name: "size", value: "1000")]
+      )
+    else {
+      throw URLError(.badURL)
+    }
+
+    var request = URLRequest(url: peopleURL)
+    request.httpMethod = "GET"
+    applyCustomHeaders(for: &request)
+
+    let (data, _) = try await URLSession.shared.data(for: request)
+
+    return try JSONDecoder().decode(PeopleResult.self, from: data).people
+      .filter { !$0.name.isEmpty }
   }
 
   /// CLIP search, so this needs Smart Search enabled on the server.
@@ -430,6 +469,30 @@ actor AlbumCache {
 
     let fetched = try await api!.fetchAlbums()
     albums = fetched
+    return fetched
+  }
+}
+
+// Mirrors AlbumCache so the person picker doesn't refetch on every keystroke
+actor PersonCache {
+  static let shared = PersonCache()
+
+  private var api: ImmichAPI? = nil
+  private var people: [Person]? = nil
+
+  func getPeople(refresh: Bool = false) async throws -> [Person] {
+    api = try? await ImmichAPI()
+
+    guard api != nil else {
+      throw WidgetError.noLogin
+    }
+
+    if let people, !refresh {
+      return people
+    }
+
+    let fetched = try await api!.fetchPeople()
+    people = fetched
     return fetched
   }
 }

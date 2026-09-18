@@ -16,6 +16,21 @@ struct RandomPhotoIntent: AppIntent {
   @Parameter(title: "Album")
   var album: Album?
 
+  @Parameter(title: "Person")
+  var person: Person?
+
+  @Parameter(title: "Favorites Only", default: false)
+  var favoritesOnly: Bool
+
+  @Parameter(title: "Taken After")
+  var takenAfter: Date?
+
+  @Parameter(title: "Taken Before")
+  var takenBefore: Date?
+
+  @Parameter(title: "Rating", default: .any)
+  var rating: PhotoRating
+
   @Parameter(title: "Orientation", default: .any)
   var orientation: PhotoOrientation
 
@@ -23,7 +38,13 @@ struct RandomPhotoIntent: AppIntent {
   var quality: PhotoQuality
 
   static var parameterSummary: some ParameterSummary {
-    Summary("Get a random \(\.$orientation) photo from \(\.$album)") {
+    Summary("Get a random photo from \(\.$album)") {
+      \.$person
+      \.$favoritesOnly
+      \.$takenAfter
+      \.$takenBefore
+      \.$rating
+      \.$orientation
       \.$quality
     }
   }
@@ -32,6 +53,16 @@ struct RandomPhotoIntent: AppIntent {
     let api = try await ImmichAPI()
 
     var filter = (album ?? Album.NONE).filter
+    if let person {
+      filter.personIds = [person.id]
+    }
+    if favoritesOnly {
+      filter.isFavorite = true
+    }
+    filter.takenAfter = takenAfter
+    filter.takenBefore = takenBefore
+    filter.rating = rating.value
+
     if orientation != .any {
       filter.withExif = true
       filter.size = Self.candidatePoolSize
